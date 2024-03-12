@@ -1,0 +1,31 @@
+//Rendered in https://edotor.net/
+digraph diagram1 {
+    label="Language Option LLD Single TFN"
+
+    ccCaller[label="CheckCreditCardCaller",shape=diamond]
+    cfl[label="CheckPreferredLanguage",shape=diamond];
+    pa_0002[label="IDFC_UF_PA_0002 \npromo prompt"];
+    mn_0001[label="IDFC_UF_MN_0001 \nfor english<press 1>\nfor hindi<press2>",shape=rectangle];
+    crsl[label="CheckRMNSetLang",shape=diamond]
+    mn_0002[label="IDFC_UF_MN_0002 ",shape=rectangle];
+    splh[label="SetPreferredLanguageHost",shape=diamond]
+    pa_0005[label="IDFC_UF_PA_0005 \nLang. pref. saved succesfully"];
+
+    //edge details
+    nodesep = "1"
+    ccCaller->cfl
+    cfl->pa_0002[label="Y",];
+    cfl->mn_0001[label="N"];
+    cfl->mn_0001[label="NA"];
+    mn_0001->crsl[label="Press 1"];
+    mn_0001->crsl[label="Press 2"];
+    mn_0001->pa_0002[label="max/invalid"];
+    crsl->mn_0002[label="RMN "];
+    crsl->pa_0002[label="NRMN"];
+    mn_0002->pa_0002[label="max/invalid"];
+    mn_0002->splh[label="Press 1"];
+    splh->pa_0005[label="Y",];
+    splh->pa_0002[label="N",];
+    splh->pa_0002[label="NA",];
+    pa_0005->pa_0002
+}

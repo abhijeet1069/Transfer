@@ -9,7 +9,7 @@ Spring Boot, Spring cloud config, Spring cloud stream
 -  Interface design : How to structure service URLs to communicate intent?
 -  Configuration Management of service : How to move between different environments in cloud so as to never change app code or config?
                                         (Spring Cloud Config)
--  Event processing between services : (Spring Cloud Stream)
+-  Event processing between services : (Spring Cloud Stream, integrates with RabbitMQ)
     
 ## Routing patterns
 

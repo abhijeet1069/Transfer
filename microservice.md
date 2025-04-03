@@ -39,8 +39,19 @@ Preventing problems of a single service from cascading up and out to the consume
 - Log correlation : How do you tie together all the logs produced between services for a single user transaction? With this pattern, we’ll look at how to implement a
                     correlation ID, which is a unique identifier that will be carried across all service calls in a transaction and can be used to tie together log
                     entries produced from each service.
-
-- Log aggregation : 
+- Log aggregation : With this pattern we’ll look at how to pull together all of the logs produced by your microservices (and their individual instances) into a single
+                    queryable database. We’ll also look at how to use correlation IDs to assist in searching your aggregated logs.
+- Microservice tracing : Finally, we’ll explore how to visualize the flow of a client transaction across all the services involved and understand the performance
+                         characteristics of services involved in the transaction.
 
 ## Build and deployment patterns
+
+One of the core parts of a microservice architecture is that each instance of a microservice should be identical to all its other instances. You can’t allow “configuration
+drift” (something changes on a server after it’s been deployed) to occur, because this can introduce instability in your applications.
+
+- Build and deployment pipeline : How do you create a repeatable build and deployment process that emphasizes one button builds and deployment to any environment in your organization?
+- Infrastructure as code : How do you treat the provisioning of your services as code that can be executed and managed under source control?
+- Immutable Infrastructure : Once a microservice image is created, how do you ensure that it’s never changed after it has been deployed?
+- Phoenix Servers : The longer a server is running, the more opportunity for configuration drift. How do you ensure that servers that run microservices get torn
+                    down on a regular basis and recreated off an immutable image?
 

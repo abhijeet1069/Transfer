@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Editable Tree Builder</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #11182e;
+      --accent: #6ee7ff;
+      --accent-2: #a78bfa;
+      --text: #e6edf6;
+      --muted: #9aa4b2;
+      --danger: #ff6b6b;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial; }
+
+    #app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
+
+    .toolbar {
+      display: flex; gap: .5rem; align-items: center; padding: .75rem 1rem; border-bottom: 1px solid #1b2442; background: linear-gradient(180deg, #0e1630, #0b1228);
+      position: sticky; top: 0; z-index: 10;
+    }
+    .toolbar .title { font-weight: 700; letter-spacing: .3px; margin-right: 1rem; }
+    .toolbar button, .toolbar label.btn { 
+      background: var(--panel); border: 1px solid #1f2a4d; color: var(--text);
+      padding: .5rem .75rem; border-radius: .75rem; cursor: pointer; transition: transform .05s ease, background .2s ease, border-color .2s ease; font-weight: 600;
+    }
+    .toolbar button:hover, .toolbar label.btn:hover { transform: translateY(-1px); border-color: #2d3a6b; }
+    .toolbar button.active { outline: 2px solid var(--accent); }
+    .toolbar button.danger { border-color: #4a1f26; background: #201016; color: #ffd4d4; }
+    .toolbar .spacer { flex: 1; }
+    .toolbar input[type="file"] { display: none; }
+
+    .hint { margin-left: .5rem; color: var(--muted); font-size: .9rem; }
+
+    #stage-wrap { position: relative; }
+    #stage { width: 100%; height: calc(100vh - 64px); display: block; cursor: default; background: #0a0f1f; }
+
+    /* SVG styling */
+    .grid line { stroke: #172043; stroke-width: 1; }
+    .edge { stroke: #6c89ff; stroke-width: 2.25; marker-end: url(#arrow); opacity: .9; }
+    .edge.highlight { stroke: #fff; }
+
+    .node circle { fill: #1a2144; stroke: #2e3b76; stroke-width: 2; }
+    .node circle.selected { stroke: var(--accent); filter: drop-shadow(0 0 8px rgba(110,231,255,.35)); }
+    .node circle.root { stroke: var(--accent-2); }
+    .node text { fill: var(--text); font-weight: 700; font-size: 13px; user-select: none; pointer-events: none; }
+
+    .floating-help {
+      position: absolute; right: 12px; bottom: 12px; max-width: 360px; padding: .75rem .9rem; border-radius: .9rem; background: rgba(17,24,46,.92); border: 1px solid #1c2547; box-shadow: 0 6px 30px rgba(0,0,0,.35);
+      font-size: .9rem; color: var(--muted);
+    }
+    .floating-help b { color: var(--text); }
+    .kbd { display: inline-block; padding: 1px 6px; border: 1px solid #2a345f; border-bottom-width: 2px; border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; color: #d6e0ff; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="toolbar">
+      <div class="title">🌳 Editable Tree Builder</div>
+      <button id="mode-move" class="active" title="Drag nodes, select, edit by double-click">Select/Move (V)</button>
+      <button id="mode-connect" title="Connect: click parent then child">Connect (C)</button>
+      <button id="mode-add" title="Add: double-click anywhere also works">Add Node (A)</button>
+      <button id="mode-delete" class="danger" title="Delete selected node or edge">Delete (Del)</button>
+
+      <div class="spacer"></div>
+
+      <button id="btn-export" title="Download as JSON">Export JSON</button>
+      <label class="btn" for="file-input" title="Load from JSON">Import JSON</label>
+      <input id="file-input" type="file" accept="application/json" />
+      <button id="btn-clear" class="danger" title="Clear canvas">Clear</button>
+      <span class="hint">Double‑click canvas = add node • Double‑click node = rename</span>
+    </div>
+
+    <div id="stage-wrap">
+      <svg id="stage"></svg>
+      <div class="floating-help" id="help">
+        <div><b>Quick tips</b></div>
+        <ul style="margin: .4rem 0 .2rem 1rem;">
+          <li>Drag nodes to reposition</li>
+          <li><b>Connect mode</b>: click <b>parent</b> → <b>child</b></li>
+          <li>Double‑click node to rename</li>
+          <li>Press <span class="kbd">Delete</span> to remove selection</li>
+          <li>Hold <span class="kbd">Shift</span> while dragging for slow move</li>
+          <li>Export/Import JSON to save/share</li>
+        </ul>
+        <div style="opacity:.8">Hotkeys: <span class="kbd">V</span>, <span class="kbd">C</span>, <span class="kbd">A</span>, <span class="kbd">Delete</span></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function(){
+    const svg = document.getElementById('stage');
+    const W = () => svg.clientWidth;
+    const H = () => svg.clientHeight;
+
+    // State
+    let nodes = []; // {id, x, y, label}
+    let edges = []; // {id, parentId, childId}
+    let nextId = 1;
+
+    let mode = 'move'; // 'move' | 'connect' | 'add' | 'delete'
+    let selectedNodeId = null;
+    let selectedEdgeId = null;
+    let connectFromId = null;
+
+    // Layout SVG base and grid
+    function setupSVG(){
+      svg.setAttribute('width', '100%');
+      svg.setAttribute('height', '100%');
+      svg.innerHTML = '';
+
+      const defs = elt('defs');
+      const marker = elt('marker', { id:'arrow', viewBox:'0 0 10 10', refX:'10', refY:'5', markerWidth:'8', markerHeight:'8', orient:'auto-start-reverse' });
+      marker.appendChild(elt('path', { d:'M 0 0 L 10 5 L 0 10 z', fill:'#6c89ff'}));
+      defs.appendChild(marker);
+      svg.appendChild(defs);
+
+      // grid
+      const grid = elt('g', { class:'grid' });
+      const spacing = 32;
+      for (let x=0; x<=4000; x+=spacing) grid.appendChild(elt('line', { x1:x, y1:0, x2:x, y2:4000 }));
+      for (let y=0; y<=4000; y+=spacing) grid.appendChild(elt('line', { x1:0, y1:y, x2:4000, y2:y }));
+      grid.setAttribute('opacity', '0.25');
+      svg.appendChild(grid);
+
+      svg.appendChild(elt('g', { id:'edges' }));
+      svg.appendChild(elt('g', { id:'nodes' }));
+    }
+
+    function elt(tag, attrs={}){
+      const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+      for (const [k,v] of Object.entries(attrs)) e.setAttribute(k,v);
+      return e;
+    }
+
+    function render(){
+      const gEdges = document.getElementById('edges');
+      const gNodes = document.getElementById('nodes');
+      gEdges.innerHTML = '';
+      gNodes.innerHTML = '';
+
+      // Draw edges first
+      for (const e of edges){
+        const p = nodeById(e.parentId);
+        const c = nodeById(e.childId);
+        if (!p || !c) continue;
+        const line = elt('line', { class:'edge', x1:p.x, y1:p.y, x2:c.x, y2:c.y });
+        if (selectedEdgeId === e.id) line.classList.add('highlight');
+        line.addEventListener('click', ev => {
+          ev.stopPropagation();
+          selectedEdgeId = e.id; selectedNodeId = null; connectFromId = null; updateToolbar(); render();
+        });
+        gEdges.appendChild(line);
+      }
+
+      // Draw nodes
+      for (const n of nodes){
+        const g = elt('g', { class:'node', transform:`translate(${n.x},${n.y})` });
+        const circle = elt('circle', { r: 22 });
+        if (selectedNodeId === n.id) circle.classList.add('selected');
+        if (isRoot(n.id)) circle.classList.add('root');
+        g.appendChild(circle);
+
+        const label = elt('text', { 'text-anchor':'middle', 'alignment-baseline':'central' });
+        label.textContent = n.label;
+        g.appendChild(label);
+
+        // Node event handlers
+        g.addEventListener('mousedown', onNodeMouseDown(n));
+        g.addEventListener('click', onNodeClick(n));
+        g.addEventListener('dblclick', onNodeDblClick(n));
+        g.addEventListener('contextmenu', e => { e.preventDefault(); selectNode(n.id); if (mode==='delete') deleteSelection(); });
+
+        gNodes.appendChild(g);
+      }
+    }
+
+    function isRoot(id){
+      return !edges.some(e => e.childId === id);
+    }
+
+    function nodeById(id){
+      return nodes.find(n => n.id === id);
+    }
+
+    function addNode(x, y, label){
+      const n = { id: nextId++, x, y, label: label || `N${nextId-1}` };
+      nodes.push(n);
+      selectNode(n.id);
+      autosave();
+      render();
+    }
+
+    function connect(parentId, childId){
+      if (parentId === childId) return;
+      // prevent duplicate edges
+      if (edges.some(e => e.parentId===parentId && e.childId===childId)) return;
+      // (Optional) prevent simple cycles by checking if parent is reachable from child
+      if (createsCycle(parentId, childId)) { alert('That would create a cycle. Trees must be acyclic.'); return; }
+      edges.push({ id: `e${Date.now()}-${Math.random().toString(36).slice(2,7)}`, parentId, childId });
+      autosave();
+      render();
+    }
+
+    function createsCycle(parentId, childId){
+      // DFS from parentId to see if we can reach childId through childId -> ... -> parentId (reverse)
+      // actually check if parent is reachable from child after adding edge
+      const seen = new Set();
+      function dfs(id){
+        if (id === parentId) return true; // would form a cycle
+        for (const e of edges){
+          if (e.parentId === id){
+            if (seen.has(e.childId)) continue;
+            seen.add(e.childId);
+            if (dfs(e.childId)) return true;
+          }
+        }
+        return false;
+      }
+      return dfs(childId);
+    }
+
+    function selectNode(id){ selectedNodeId = id; selectedEdgeId = null; connectFromId = null; updateToolbar(); }
+
+    function deleteSelection(){
+      if (selectedNodeId != null){
+        // remove incident edges
+        edges = edges.filter(e => e.parentId !== selectedNodeId && e.childId !== selectedNodeId);
+        nodes = nodes.filter(n => n.id !== selectedNodeId);
+        selectedNodeId = null;
+      } else if (selectedEdgeId != null){
+        edges = edges.filter(e => e.id !== selectedEdgeId);
+        selectedEdgeId = null;
+      }
+      autosave();
+      render();
+    }
+
+    // Drag handling
+    let dragging = null; // {id, dx, dy}
+
+    function onNodeMouseDown(n){
+      return function(e){
+        e.stopPropagation();
+        if (mode === 'delete'){ selectNode(n.id); deleteSelection(); return; }
+        if (mode === 'connect') return; // handled on click
+        selectNode(n.id);
+        const pt = clientToSVG(e.clientX, e.clientY);
+        dragging = { id: n.id, dx: n.x - pt.x, dy: n.y - pt.y };
+      }
+    }
+
+    function onNodeClick(n){
+      return function(e){
+        e.stopPropagation();
+        if (mode === 'connect'){
+          if (!connectFromId){ connectFromId = n.id; highlightConnectFrom(true); }
+          else { connect(connectFromId, n.id); connectFromId = null; highlightConnectFrom(false); }
+        } else {
+          selectNode(n.id);
+        }
+      }
+    }
+
+    function onNodeDblClick(n){
+      return function(e){
+        e.stopPropagation();
+        const newLabel = prompt('Node label:', n.label);
+        if (newLabel != null && newLabel.trim().length){ n.label = newLabel.trim(); autosave(); render(); }
+      }
+    }
+
+    function highlightConnectFrom(on){
+      // simple visual: toggle selected state remains enough
+      render();
+    }
+
+    function clientToSVG(cx, cy){
+      const pt = svg.createSVGPoint();
+      pt.x = cx; pt.y = cy;
+      const inv = svg.getScreenCTM().inverse();
+      const sp = pt.matrixTransform(inv);
+      return { x: sp.x, y: sp.y };
+    }
+
+    svg.addEventListener('mousemove', e => {
+      if (!dragging) return;
+      const pt = clientToSVG(e.clientX, e.clientY);
+      const n = nodeById(dragging.id);
+      if (!n) return;
+      const slow = e.shiftKey ? 0.2 : 1;
+      n.x = Math.round((pt.x + dragging.dx) * slow + n.x * (1 - slow));
+      n.y = Math.round((pt.y + dragging.dy) * slow + n.y * (1 - slow));
+      render();
+    });
+
+    window.addEventListener('mouseup', e => { if (dragging){ dragging = null; autosave(); } });
+
+    // Add via double-click on empty space
+    svg.addEventListener('dblclick', e => {
+      const target = e.target; // avoid when double-click on node already handled
+      if (target.closest && target.closest('.node')) return;
+      const pt = clientToSVG(e.clientX, e.clientY);
+      addNode(pt.x, pt.y);
+    });
+
+    // Click on empty space clears selection
+    svg.addEventListener('click', e => {
+      if (e.target.closest && e.target.closest('.node')) return;
+      selectedNodeId = null; selectedEdgeId = null; connectFromId = null; updateToolbar(); render();
+    });
+
+    // Toolbar logic
+    const btnMove = document.getElementById('mode-move');
+    const btnConnect = document.getElementById('mode-connect');
+    const btnAdd = document.getElementById('mode-add');
+    const btnDelete = document.getElementById('mode-delete');
+
+    function setMode(m){ mode = m; updateToolbar(); }
+    function updateToolbar(){
+      for (const b of [btnMove, btnConnect, btnAdd, btnDelete]) b.classList.remove('active');
+      if (mode==='move') btnMove.classList.add('active');
+      if (mode==='connect') btnConnect.classList.add('active');
+      if (mode==='add') btnAdd.classList.add('active');
+      if (mode==='delete') btnDelete.classList.add('active');
+    }
+
+    btnMove.addEventListener('click', () => setMode('move'));
+    btnConnect.addEventListener('click', () => setMode('connect'));
+    btnAdd.addEventListener('click', () => setMode('add'));
+    btnDelete.addEventListener('click', () => setMode('delete'));
+
+    // Add mode: single click adds; we use dblclick anywhere anyway
+    svg.addEventListener('mousedown', e => {
+      if (mode !== 'add') return;
+      const tgtNode = e.target.closest && e.target.closest('.node');
+      if (tgtNode) return; // don't add on top of node
+      const pt = clientToSVG(e.clientX, e.clientY);
+      addNode(pt.x, pt.y);
+    });
+
+    // Hotkeys
+    window.addEventListener('keydown', e => {
+      if (['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+      if (e.key === 'v' || e.key === 'V') setMode('move');
+      if (e.key === 'c' || e.key === 'C') setMode('connect');
+      if (e.key === 'a' || e.key === 'A') setMode('add');
+      if (e.key === 'Delete') deleteSelection();
+    });
+
+    // Export / Import / Clear
+    document.getElementById('btn-export').addEventListener('click', () => {
+      const data = { nodes, edges, nextId };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'tree.json'; a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    document.getElementById('file-input').addEventListener('change', async (ev) => {
+      const file = ev.target.files[0]; if (!file) return;
+      const text = await file.text();
+      try {
+        const data = JSON.parse(text);
+        if (Array.isArray(data.nodes) && Array.isArray(data.edges)){
+          nodes = data.nodes; edges = data.edges; nextId = data.nextId || (Math.max(0, ...nodes.map(n=>n.id)) + 1);
+          selectedNodeId = selectedEdgeId = connectFromId = null;
+          autosave();
+          render();
+        } else throw new Error('Invalid schema');
+      } catch(err){ alert('Failed to import JSON: ' + err.message); }
+      ev.target.value = '';
+    });
+
+    document.getElementById('btn-clear').addEventListener('click', () => {
+      if (!confirm('Clear the canvas?')) return;
+      nodes = []; edges = []; nextId = 1; selectedNodeId = selectedEdgeId = connectFromId = null; autosave(); render();
+    });
+
+    // Autosave to localStorage
+    const LS_KEY = 'editable-tree-builder-v1';
+    function autosave(){
+      const data = { nodes, edges, nextId };
+      try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch {}
+    }
+    function autoload(){
+      try {
+        const raw = localStorage.getItem(LS_KEY);
+        if (!raw) return false;
+        const data = JSON.parse(raw);
+        nodes = data.nodes || []; edges = data.edges || []; nextId = data.nextId || 1;
+        return nodes.length > 0 || edges.length > 0;
+      } catch { return false; }
+    }
+
+    // Resize handling: ensure SVG always fills viewport
+    function resize(){ svg.setAttribute('viewBox', `0 0 ${Math.max(1200, W())} ${Math.max(800, H())}`); }
+    window.addEventListener('resize', resize);
+
+    // Init
+    function init(){
+      setupSVG();
+      if (!autoload()) {
+        // starter example
+        addNode(240, 180, 'Root');
+        addNode(140, 300, 'Left');
+        addNode(340, 300, 'Right');
+        connect(1,2); connect(1,3);
+      } else { render(); }
+      resize();
+    }
+
+    init();
+  })();
+  </script>
+</body>
+</html>
